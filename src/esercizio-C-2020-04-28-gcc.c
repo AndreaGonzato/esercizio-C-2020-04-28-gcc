@@ -8,12 +8,19 @@
 #include <sys/wait.h> 	// wait
 #include <sys/stat.h>	// open
 #include <fcntl.h>		// open
+#include <sys/inotify.h>// inotify
 #include <fcntl.h>
 #include <string.h>
+#include <sys/inotify.h>
+#include <limits.h>
+#include <time.h>
+#include <errno.h>
 
 
 int check_file_existence(char * fname);
 void make_dir(char * dir_path);
+char * concat(const char *s1, const char *s2);
+void create_hello_world();
 
 
 int main(){
@@ -29,34 +36,76 @@ int main(){
 		make_dir(dir_path);
 	}
 
-	char * file_hello_world = "../src/hello_world.c";
+	char * file_hello_world = concat(dir_path, "/hello_world.c");
 	if(! check_file_existence(file_hello_world)){
 		// file_hello_world do not exists
-		// create open and write the code
-		int fd = open("hello_world.c", O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
-		if(fd == -1){
-			perror("open()");
-			exit(1);
-		}
-
-		char * lines[] = {	"#include <stdio.h>\n",
-							"int main() {\n",
-							"	printf(\"Hello, World!\");\n",
-							"	return 0;\n",
-							"}"
-		};
-		int array_lines_length = sizeof(lines) / sizeof(char *);
-
-		for(int i=0 ; i<array_lines_length ; i++){
-			int res = write(fd, lines[i], strlen(lines[i]));
-			if(res == -1){
-				perror("write()");
-			}
-		}
-
-		close(fd);
-
+		// create open and write the source code for hello_word.c
+		create_hello_world();
 	}
+
+	int fd = open("output.txt", O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
+	if(fd == -1){
+		perror("open()");
+		exit(1);
+	}
+
+
+	// watch hello_world.c for this task use inotify
+	int wd;
+	int inotifyFd;
+	int num_bytes_read;
+
+	// inotify_init() initializes a new inotify instance and
+	// returns a file descriptor associated with a new inotify event queue.
+    inotifyFd = inotify_init();
+    if (inotifyFd == -1) {
+        perror("inotify_init");
+        exit(EXIT_FAILURE);
+    }
+
+    wd = inotify_add_watch(inotifyFd, file_hello_world, IN_MODIFY);
+    if (wd == -1) {
+        perror("inotify_init");
+        exit(EXIT_FAILURE);
+    }
+
+    int BUF_LEN = 4096;
+    char buf[BUF_LEN];
+    time_t last_modify = NULL;
+    // loop forever
+    while(1) {
+    	num_bytes_read = read(inotifyFd, buf, BUF_LEN);
+        if (num_bytes_read == 0) {
+            printf("read() from inotify fd returned 0!");
+            exit(EXIT_FAILURE);
+        }
+        if (num_bytes_read == -1) {
+        	if (errno == EINTR) {
+				printf("read(): EINTR\n");
+				continue;
+        	} else {
+                perror("read()");
+                exit(EXIT_FAILURE);
+        	}
+        }
+
+        // process all of the events in buffer returned by read()
+        struct inotify_event *event;
+        for (char * p = buf; p < buf + num_bytes_read; ) {
+            event = (struct inotify_event *) p;
+
+            if(event->mask == IN_MODIFY && last_modify+1 < time(NULL)){
+            	printf("modificato\n"); //TEST
+            	last_modify = time(NULL);
+            }
+
+            p += sizeof(struct inotify_event) + event->len;
+            // event->len is length of (optional) file name
+        }
+    }
+
+	close(fd);
+	close(inotifyFd);
 
 	exit(0);
 }
@@ -90,4 +139,38 @@ void make_dir(char * dir_path){
 			// father
 			waitpid(child_pid, NULL, 0);
 	}
+}
+
+char * concat(const char *s1, const char *s2){
+    char *result = malloc(strlen(s1) + strlen(s2) + 1); // +1 for the null-terminator
+    if(result == NULL){
+    	perror("malloc()");
+    }
+    strcpy(result, s1);
+    strcat(result, s2);
+    return result;
+}
+
+void create_hello_world(){
+	int fd = open("hello_world.c", O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
+	if(fd == -1){
+		perror("open()");
+		exit(1);
+	}
+
+	char * lines[] = {	"#include <stdio.h>",
+						"int main() {",
+						"	printf(\"Hello, World!\");",
+						"	return 0;",
+						"}"
+	};
+	int array_lines_length = sizeof(lines) / sizeof(char *);
+
+	for(int i=0 ; i<array_lines_length ; i++){
+		int res = write(fd, concat(lines[i], "\n"), strlen(lines[i])+1);
+		if(res == -1){
+			perror("write()");
+		}
+	}
+	close(fd);
 }
