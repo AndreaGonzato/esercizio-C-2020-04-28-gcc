@@ -21,10 +21,13 @@ int check_file_existence(char * fname);
 void make_dir(char * dir_path);
 char * concat(const char *s1, const char *s2);
 void create_hello_world();
+void parent_process_signal_handler(int signum);
+void fork_and_compile();
 
+char * dir_path = "/home/andrea/Scrivania/src";
 
 int main(){
-	char * dir_path = "../src";
+
 
 	if(check_file_existence(dir_path)){
 		// src folder exists
@@ -36,7 +39,13 @@ int main(){
 		make_dir(dir_path);
 	}
 
-	char * file_hello_world = concat(dir_path, "/hello_world.c");
+	int res = chdir(dir_path);
+	if(res == -1){
+		perror("chdir()");
+		exit(1);
+	}
+
+	char * file_hello_world = "hello_world.c";
 	if(! check_file_existence(file_hello_world)){
 		// file_hello_world do not exists
 		// create open and write the source code for hello_word.c
@@ -47,6 +56,11 @@ int main(){
 	if(fd == -1){
 		perror("open()");
 		exit(1);
+	}
+
+	if (signal(SIGCHLD, parent_process_signal_handler) == SIG_ERR) {
+		perror("signal");
+		exit(EXIT_FAILURE);
 	}
 
 
@@ -96,6 +110,7 @@ int main(){
 
             if(event->mask == IN_MODIFY && last_modify+1 < time(NULL)){
             	printf("modificato\n"); //TEST
+            	fork_and_compile();
             	last_modify = time(NULL);
             }
 
@@ -173,4 +188,56 @@ void create_hello_world(){
 		}
 	}
 	close(fd);
+}
+
+void parent_process_signal_handler(int signum) {
+	// riceviamo SIGCHLD: Child stopped or terminated
+
+	printf("[parent] parent_process_signal_handler\n");
+}
+
+
+void fork_and_compile(){
+	int wstatus;
+	int result_from_child = -1;
+
+	pid_t child_pid;
+	child_pid = fork();
+
+	switch (child_pid) {
+		case 0:{
+			char * newargv[] = {"gcc", "hello_world.c", "-o", "hello", NULL };
+			char * newenviron[] = { NULL };
+			execve("/usr/bin/gcc", newargv, newenviron);
+			perror("execve()");
+			break;
+		}
+		case -1:
+			printf("fork() failed\n");
+			exit(1);
+			break;
+		default:
+			do {
+				pid_t ws = waitpid(child_pid, &wstatus, WUNTRACED | WCONTINUED);
+				if (ws == -1) {
+					perror("[parent] waitpid");
+					exit(EXIT_FAILURE);
+				}
+				if (WIFEXITED(wstatus)) {
+					result_from_child = WEXITSTATUS(wstatus);
+					//printf("[parent] child process è terminato, ha restituito: %d\n", result_from_child);
+				} else if (WIFSIGNALED(wstatus)) {
+					printf("[parent] child process killed by signal %d\n", WTERMSIG(wstatus));
+				} else if (WIFSTOPPED(wstatus)) {
+					printf("[parent] child process stopped by signal %d\n", WSTOPSIG(wstatus));
+				} else if (WIFCONTINUED(wstatus)) {
+					printf("[parent] child process continued\n");
+				}
+			} while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
+
+			if (result_from_child != -1) {
+				printf("[parent] il valore restituito dal processo figlio è %d\n", result_from_child);
+			}
+			exit(0);
+	}
 }
