@@ -36,7 +36,8 @@ int main(){
 		// src folder do not exists
 		printf("%s : do not exists\n", dir_path);
 		// create dir
-		make_dir(dir_path);
+		mkdir(dir_path, 00755);
+		//make_dir(dir_path);
 	}
 
 	int res = chdir(dir_path);
