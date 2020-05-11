@@ -18,7 +18,6 @@
 
 
 int check_file_existence(char * fname);
-void make_dir(char * dir_path);
 char * concat(const char *s1, const char *s2);
 void create_hello_world();
 void parent_process_signal_handler(int signum);
@@ -37,7 +36,6 @@ int main(){
 		printf("%s : do not exists\n", dir_path);
 		// create dir
 		mkdir(dir_path, 00755);
-		//make_dir(dir_path);
 	}
 
 	int res = chdir(dir_path);
@@ -135,25 +133,6 @@ int check_file_existence(char * fname) {
 	} else {
 	    // file doesn't exist
 		return 0;
-	}
-}
-
-void make_dir(char * dir_path){
-	pid_t child_pid = fork();
-	switch(child_pid){
-		case 0:{
-			// child
-			char * newargv[] = { "mkdir", dir_path, NULL };
-			char * newenviron[] = { NULL };
-			execve("/bin/mkdir", newargv, newenviron);
-			break;
-		}
-		case -1:
-			printf("fork() fail!\n");
-			exit(1);
-		default:
-			// father
-			waitpid(child_pid, NULL, 0);
 	}
 }
 
