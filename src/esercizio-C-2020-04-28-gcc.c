@@ -23,10 +23,15 @@ char * concat(const char *s1, const char *s2);
 void create_hello_world();
 void parent_process_signal_handler(int signum);
 void fork_and_compile();
+void fork_and_execute();
 
 extern char **environ;
 
 char * dir_path = "/home/andrea/Scrivania/src";
+int fd;
+
+int * pid_list;
+int pid_list_length = 0;
 
 int main(){
 
@@ -54,7 +59,7 @@ int main(){
 		create_hello_world();
 	}
 
-	int fd = open("output.txt", O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
+	fd = open("output.txt", O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
 	if(fd == -1){
 		perror("open()");
 		exit(1);
@@ -79,7 +84,7 @@ int main(){
         exit(EXIT_FAILURE);
     }
 
-    wd = inotify_add_watch(inotifyFd, file_hello_world, IN_MODIFY);
+    wd = inotify_add_watch(inotifyFd, dir_path, IN_MODIFY);
     if (wd == -1) {
         perror("inotify_init");
         exit(EXIT_FAILURE);
@@ -87,7 +92,9 @@ int main(){
 
     int BUF_LEN = 4096;
     char buf[BUF_LEN];
-    time_t last_modify = 0; // è un intero, non un "oggetto", non puoi inizializzarlo a NULL!
+    clock_t last_modify = clock();
+    clock_t difference;
+    int msec;
     // loop forever
     while(1) {
     	num_bytes_read = read(inotifyFd, buf, BUF_LEN);
@@ -109,10 +116,12 @@ int main(){
         struct inotify_event *event;
         for (char * p = buf; p < buf + num_bytes_read; ) {
             event = (struct inotify_event *) p;
-            if(event->mask == IN_MODIFY && last_modify+1 < time(NULL)){
+            difference = clock() - last_modify;
+            msec = difference * 1000 / CLOCKS_PER_SEC;
+            if(event->mask == IN_MODIFY  && msec > 1000){
             	printf("modificato\n"); //TEST
             	fork_and_compile();
-            	last_modify = time(NULL);
+            	last_modify = clock();
             }
 
             p += sizeof(struct inotify_event) + event->len;
@@ -174,7 +183,17 @@ void create_hello_world(){
 void parent_process_signal_handler(int signum) {
 	// riceviamo SIGCHLD: Child stopped or terminated
 
-	printf("[parent] parent_process_signal_handler\n");
+	printf("[process_signal_handler]\n");
+
+
+	if(pid_list_length > 0){
+		printf("zombie\n");
+		printf("pid_list_length before wait: %d\n", pid_list_length);
+		waitpid(pid_list[pid_list_length-1], NULL, 0);
+		pid_list_length--;
+		printf("pid_list_length after wait: %d\n", pid_list_length);
+	}
+
 }
 
 
@@ -188,20 +207,14 @@ void fork_and_compile(){
 	switch (child_pid) {
 		case 0:{
 			char * newargv[] = {"gcc", "hello_world.c", "-o", "hello", NULL };
-			/*
-			 * Evidentemente non si può lanciare gcc con un insieme
-			 * di variabili d'ambiente vuoto.
-			 * Bisogna passargli 'environ', cioè una copia
-			 * delle variabili d'ambiente del processo attuale.
-			 */
+			close(fd);
 			execve("/usr/bin/gcc", newargv, environ);
 			perror("execve()");
-			break;
+			exit(1);
 		}
 		case -1:
 			printf("fork() failed\n");
 			exit(1);
-			break;
 		default:
 			do {
 				pid_t ws = waitpid(child_pid, &wstatus, WUNTRACED | WCONTINUED);
@@ -222,8 +235,58 @@ void fork_and_compile(){
 			} while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
 
 			if (result_from_child != -1) {
-				printf("[parent] il valore restituito dal processo figlio è %d\n", result_from_child);
+				printf("[parent] compilation exit value: %d\n", result_from_child);
+				if(result_from_child == 0){
+					// correct compile then execute
+					fork_and_execute();
+				}
 			}
-			exit(0);
 	}
+}
+
+void fork_and_execute(){
+
+
+	pid_t child_pid;
+	pid_list_length++;
+	pid_list = realloc(pid_list, pid_list_length*sizeof(pid_t));
+	if(pid_list == NULL){
+		perror("realloc()");
+	}
+
+	child_pid = fork();
+	switch (child_pid) {
+		case -1:
+			printf("fork() failed\n");
+			exit(1);
+		case 0:{
+			pid_list[pid_list_length-1] = child_pid;
+
+		    if (dup2(fd, STDOUT_FILENO) == -1) {
+		    	perror("problema con dup2");
+		    	exit(EXIT_FAILURE);
+		    }
+		    close(fd);
+
+			char * newargv[] = {"./hello ", NULL };
+			char * newenv[] = { NULL };
+			execve(concat(dir_path,"/hello"), newargv, newenv);
+
+			perror("execve()");
+			exit(1);
+		}
+		default:{
+			//father
+			pid_list[pid_list_length-1] = child_pid;
+
+			/*
+			int res = wait(NULL);
+			if(res == -1){
+				perror("wait()");
+				exit(1);
+			}
+			*/
+		}
+	}
+
 }
