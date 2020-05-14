@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -16,12 +18,13 @@
 #include <time.h>
 #include <errno.h>
 
-
 int check_file_existence(char * fname);
 char * concat(const char *s1, const char *s2);
 void create_hello_world();
 void parent_process_signal_handler(int signum);
 void fork_and_compile();
+
+extern char **environ;
 
 char * dir_path = "/home/andrea/Scrivania/src";
 
@@ -84,7 +87,7 @@ int main(){
 
     int BUF_LEN = 4096;
     char buf[BUF_LEN];
-    time_t last_modify = NULL;
+    time_t last_modify = 0; // è un intero, non un "oggetto", non puoi inizializzarlo a NULL!
     // loop forever
     while(1) {
     	num_bytes_read = read(inotifyFd, buf, BUF_LEN);
@@ -106,7 +109,6 @@ int main(){
         struct inotify_event *event;
         for (char * p = buf; p < buf + num_bytes_read; ) {
             event = (struct inotify_event *) p;
-
             if(event->mask == IN_MODIFY && last_modify+1 < time(NULL)){
             	printf("modificato\n"); //TEST
             	fork_and_compile();
@@ -114,7 +116,6 @@ int main(){
             }
 
             p += sizeof(struct inotify_event) + event->len;
-            // event->len is length of (optional) file name
         }
     }
 
@@ -187,8 +188,13 @@ void fork_and_compile(){
 	switch (child_pid) {
 		case 0:{
 			char * newargv[] = {"gcc", "hello_world.c", "-o", "hello", NULL };
-			char * newenviron[] = { NULL };
-			execve("/usr/bin/gcc", newargv, newenviron);
+			/*
+			 * Evidentemente non si può lanciare gcc con un insieme
+			 * di variabili d'ambiente vuoto.
+			 * Bisogna passargli 'environ', cioè una copia
+			 * delle variabili d'ambiente del processo attuale.
+			 */
+			execve("/usr/bin/gcc", newargv, environ);
 			perror("execve()");
 			break;
 		}
